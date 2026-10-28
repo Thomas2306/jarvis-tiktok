@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#000">
+  <title>J.A.R.V.I.S.</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "/node_modules/three/build/three.module.js",
+        "three/addons/": "/node_modules/three/examples/jsm/"
+    } }
+  </script>
+</head>
+<body data-mode="boot">
+  <canvas id="gl"></canvas>
+  <div id="labels"></div>
+  <div class="vignette"></div>
+  <div class="grain"></div>
+  <div class="scan"></div>
+
+  <header class="top">
+    <div class="brand">
+      <div class="mark"><i></i><i></i><i></i></div>
+      <div><b>J.A.R.V.I.S.</b><small>PERSONAL COGNITIVE SYSTEM</small></div>
+    </div>
+    <div class="status"><span class="dot"></span><span id="statusText">INIZIALIZZAZIONE</span></div>
+    <div class="clock"><b id="clock">--:--:--</b><small id="date"></small></div>
+  </header>
+
+  <section id="stats" aria-live="polite"></section>
+
+  <section id="timeline">
+    <h3><span>AGENDA</span><em>OGGI</em></h3>
+    <ol id="agenda"></ol>
+  </section>
+
+  <div id="thinking">
+    <span id="thinkLabel">ANALISI SEMANTICA</span>
+    <div class="think-row"><b id="synapses">0</b><small>SINAPSI<br>ATTIVATE</small><em id="thinkTime">0.0s</em></div>
+  </div>
+
+  <div id="caption">
+    <p id="you"></p>
+    <p id="says"></p>
+  </div>
+
+  <div id="hint">
+    <span>DÌ</span><b>«CIAO JARVIS»</b>
+    <div class="mic"><i id="micBar"></i></div>
+  </div>
+
+  <div id="gate">
+    <div class="gate-inner">
+      <div class="gate-ring"></div>
+      <b>J.A.R.V.I.S.</b>
+      <span id="gateText">CLICCA PER INIZIALIZZARE</span>
+      <small>Abilita microfono e audio · schermo intero</small>
+    </div>
+  </div>
+
+  <!-- Configurazione guidata: si apre al primo avvio e dal pulsante CONFIGURA -->
+  <div id="setup" class="setup">
+    <form class="setup-card" id="setupForm" autocomplete="off">
+      <span class="kicker">CONFIGURAZIONE · 1 MINUTO</span>
+      <h2>Attiviamo J.A.R.V.I.S.</h2>
+
+      <section class="step">
+        <div class="step-head"><b>01</b><div><h3>Cervello AI <em>obbligatorio</em></h3><p>La chiave OpenAI permette a Jarvis di ragionare e risponderti.</p></div></div>
+        <div class="field">
+          <input id="openaiKey" type="password" placeholder="sk-..." spellcheck="false">
+          <a class="btn" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OTTIENI LA CHIAVE ↗</a>
+        </div>
+        <small class="state" id="openaiState"></small>
+        <details><summary>Come si ottiene?</summary>
+          <ol><li>Apri il link, accedi o registrati su OpenAI.</li><li>Clicca <b>Create new secret key</b>, dagli un nome (es. Jarvis) e copia la chiave.</li><li>In <b>Billing</b> aggiungi qualche euro di credito: le API si pagano a consumo (poche decine di centesimi per centinaia di domande).</li></ol>
+        </details>
+      </section>
+
+      <section class="step">
+        <div class="step-head"><b>02</b><div><h3>Voce <em>facoltativo</em></h3><p>Con ElevenLabs Jarvis ha una voce britannica molto realistica. Senza, usa una voce neurale gratuita.</p></div></div>
+        <div class="choice">
+          <label><input type="radio" name="voice" value="free" checked> Voce gratuita</label>
+          <label><input type="radio" name="voice" value="eleven"> ElevenLabs</label>
+        </div>
+        <div class="field" id="elevenField">
+          <input id="elevenKey" type="password" placeholder="sk_..." spellcheck="false">
+          <a class="btn" href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener">OTTIENI LA CHIAVE ↗</a>
+        </div>
+        <small class="state" id="elevenState"></small>
+      </section>
+
+      <section class="step">
+        <div class="step-head"><b>03</b><div><h3>Calendario <em>facoltativo</em></h3><p>Incolla il link privato del tuo calendario: Jarvis conoscerà i tuoi impegni.</p></div></div>
+        <div class="field"><input id="calendarUrl" type="password" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics" spellcheck="false"></div>
+        <small class="state" id="calendarState"></small>
+        <details><summary>Dove trovo il link?</summary>
+          <p><b>Google Calendar</b> (da computer): apri <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener">Impostazioni</a> → a sinistra clicca il tuo calendario sotto «Impostazioni dei miei calendari» → scorri fino a <b>Indirizzo segreto in formato iCal</b> → copia.</p>
+          <p><b>Apple iCloud</b>: app Calendario → clic destro sul calendario → <b>Condividi</b> → attiva <b>Calendario pubblico</b> → copia il link (inizia con webcal://).</p>
+          <p><b>Outlook</b>: Impostazioni → Calendario → <b>Calendari condivisi</b> → Pubblica un calendario → copia il link <b>ICS</b>.</p>
+          <p class="fine">Il link resta solo sul tuo computer. Jarvis legge il calendario; gli impegni che aggiungi a voce restano nella sua agenda.</p>
+        </details>
+      </section>
+
+      <p class="setup-error" id="setupError"></p>
+      <div class="row">
+        <button type="button" id="setupClose" class="ghost">CHIUDI</button>
+        <button type="submit" id="setupSave" class="primary">ATTIVA JARVIS</button>
+      </div>
+    </form>
+  </div>
+
+  <nav id="controls">
+    <button id="setupBtn"><i id="aiDot"></i><span>CONFIGURA</span></button>
+    <button id="pauseBtn"><span>PAUSA</span></button>
+    <button id="fsBtn"><span>SCHERMO INTERO</span></button>
+    <small>D diagnostica · T scrivi · W risveglia · R reset · J registrazione</small>
+  </nav>
+
+  <form id="typeBox"><input placeholder="Scrivi a Jarvis e premi Invio…" autocomplete="off"></form>
+
+  <aside id="debug">
+    <div class="dh">VOICE DIAGNOSTICS</div>
+    <dl>
+      <dt>STATO</dt><dd id="debugState">BOOT</dd>
+      <dt>MIC</dt><dd id="debugMic">—</dd>
+      <dt>ASCOLTO</dt><dd id="debugEngine">—</dd>
+      <dt>REC</dt><dd id="debugRec">—</dd>
+      <dt>VOCE</dt><dd id="debugVoice">—</dd>
+      <dt>MENTE</dt><dd id="debugMind">—</dd>
+      <dt>SENTITO</dt><dd id="debugText">—</dd>
+      <dt>NOTE</dt><dd id="debugError">—</dd>
+    </dl>
+  </aside>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+Musica di sottofondo (facoltativa)
+
+Metti qui un file mp3 chiamato:   theme.mp3
+
+Parte al "Ciao Jarvis", si abbassa quando Jarvis parla e resta in loop in sottofondo.
+Secondo di partenza e volumi: phrases.js -> CONFIG.music
+Usa solo musica che hai il diritto di usare (soprattutto se pubblichi video).
