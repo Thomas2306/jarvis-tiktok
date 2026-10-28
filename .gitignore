@@ -2,5 +2,4 @@ node_modules/
 .venv/
 data/
 __pycache__/
-music/*.mp3
 *.log
