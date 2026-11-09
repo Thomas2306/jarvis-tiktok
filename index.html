@@ -25,7 +25,7 @@
       <div class="mark"><i></i><i></i><i></i></div>
       <div><b>J.A.R.V.I.S.</b><small>PERSONAL COGNITIVE SYSTEM</small></div>
     </div>
-    <div class="status"><span class="dot"></span><span id="statusText">INIZIALIZZAZIONE</span></div>
+    <div class="status"><span class="dot"></span><span id="statusText">INIZIALIZZAZIONE</span><span id="brainChip" hidden><i>CERVELLO</i><b id="brainName"></b></span></div>
     <div class="clock"><b id="clock">--:--:--</b><small id="date"></small></div>
   </header>
 
@@ -67,15 +67,44 @@
       <h2>Attiviamo J.A.R.V.I.S.</h2>
 
       <section class="step">
-        <div class="step-head"><b>01</b><div><h3>Cervello AI <em>obbligatorio</em></h3><p>La chiave OpenAI permette a Jarvis di ragionare e risponderti.</p></div></div>
-        <div class="field">
-          <input id="openaiKey" type="password" placeholder="sk-..." spellcheck="false">
-          <a class="btn" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OTTIENI LA CHIAVE ↗</a>
+        <div class="step-head"><b>01</b><div><h3>Cervello AI <em>obbligatorio</em></h3><p>Scegli come ragiona Jarvis: gratis, passando da un'AI all'altra quando una finisce i limiti, oppure con OpenAI a consumo.</p></div></div>
+        <div class="choice">
+          <label><input type="radio" name="brain" value="free" checked> Gratis (FreeLLMAPI)</label>
+          <label><input type="radio" name="brain" value="openai"> OpenAI</label>
         </div>
-        <small class="state" id="openaiState"></small>
-        <details><summary>Come si ottiene?</summary>
-          <ol><li>Apri il link, accedi o registrati su OpenAI.</li><li>Clicca <b>Create new secret key</b>, dagli un nome (es. Jarvis) e copia la chiave.</li><li>In <b>Billing</b> aggiungi qualche euro di credito: le API si pagano a consumo (poche decine di centesimi per centinaia di domande).</li></ol>
-        </details>
+
+        <div id="freeBox">
+          <small class="state" id="freeState"></small>
+          <ol class="howto">
+            <li>Installa <b>FreeLLMAPI</b> (gratis, open source): <a href="https://github.com/tashfeenahmed/freellmapi/releases/latest" target="_blank" rel="noopener">scarica per Windows o Mac ↗</a>. Resta acceso con un'icona vicino all'orologio.</li>
+            <li>Apri <a id="freeDash" href="http://localhost:3001" target="_blank" rel="noopener">il pannello di FreeLLMAPI ↗</a>, vai su <b>Keys</b> e incolla almeno una chiave gratuita. Più ne metti, più Jarvis ha cervelli di riserva:
+              <span class="keys">
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google ↗</a>
+                <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq ↗</a>
+                <a href="https://cloud.cerebras.ai/" target="_blank" rel="noopener">Cerebras ↗</a>
+                <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener">OpenRouter ↗</a>
+                <a href="https://console.mistral.ai/api-keys" target="_blank" rel="noopener">Mistral ↗</a>
+              </span>
+            </li>
+            <li>Torna qui e premi <b>Attiva Jarvis</b>: si collega da solo.</li>
+          </ol>
+          <details><summary>Non si collega da solo?</summary>
+            <p>Clicca l'icona di FreeLLMAPI vicino all'orologio, premi <b>Copy Key</b> e incolla qui la chiave (inizia con freellmapi-).</p>
+            <div class="field"><input id="freeKey" type="password" placeholder="freellmapi-..." spellcheck="false"></div>
+            <p class="fine">I piani gratuiti hanno dei limiti giornalieri e alcuni servizi possono usare le conversazioni per migliorare i loro modelli. Le chiavi restano sul tuo computer.</p>
+          </details>
+        </div>
+
+        <div id="openaiBox">
+          <div class="field">
+            <input id="openaiKey" type="password" placeholder="sk-..." spellcheck="false">
+            <a class="btn" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OTTIENI LA CHIAVE ↗</a>
+          </div>
+          <small class="state" id="openaiState"></small>
+          <details><summary>Come si ottiene?</summary>
+            <ol><li>Apri il link, accedi o registrati su OpenAI.</li><li>Clicca <b>Create new secret key</b>, dagli un nome (es. Jarvis) e copia la chiave.</li><li>In <b>Billing</b> aggiungi qualche euro di credito: le API si pagano a consumo (poche decine di centesimi per centinaia di domande).</li></ol>
+          </details>
+        </div>
       </section>
 
       <section class="step">

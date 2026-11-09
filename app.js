@@ -386,8 +386,14 @@ async function askMind(text) {
         raw = raw.slice(i + 2);
         let ev;
         try { ev = JSON.parse(line); } catch { continue; }
-        if (ev.type === "context") {
-          $("#thinkLabel").textContent = "MEMORIA PERTINENTE TROVATA";
+        if (ev.type === "brain") {
+          if (ev.switched) {
+            $("#thinkLabel").textContent = `CAMBIO CERVELLO · ${ev.from} → ${ev.provider}`;
+            scene.burstSynapses(60);
+          }
+          showBrain(ev, ev.switched);
+        } else if (ev.type === "context") {
+          $("#thinkLabel").textContent = "MEMORIA CONSULTATA";
           scene.highlight();
         } else if (ev.type === "tool") {
           $("#thinkLabel").textContent = { add_event: "AGGIORNAMENTO AGENDA", delete_event: "AGGIORNAMENTO AGENDA", save_memory: "CODIFICA NUOVA MEMORIA", show_number: "ELABORAZIONE DATI" }[ev.name] || "ELABORAZIONE";
@@ -440,7 +446,7 @@ async function boot() {
   try {
     state = await api("/api/bootstrap");
     refreshSetupBadge();
-    if (!state.setup.openai) openSetup();
+    if (!brainReady()) openSetup();
   } catch (e) {
     debug("debugError", "server non raggiungibile");
   }
@@ -463,7 +469,7 @@ async function start() {
   }
   setTimeout(() => setMode("sleep"), 600);
 }
-$("#gate").addEventListener("click", () => (state.setup.openai ? start() : openSetup()));
+$("#gate").addEventListener("click", () => (brainReady() ? start() : openSetup()));
 
 // ---------------------------------------------------------------- controlli (nascosti durante la registrazione)
 let hideTimer;
@@ -497,19 +503,51 @@ $("#typeBox").addEventListener("submit", (e) => {
 });
 
 // ---------------------------------------------------------------- configurazione guidata
+const brainReady = (st = state.setup) => (st.brain === "free" ? !!(st.free?.keyOk && st.free?.ready) : !!st.openai);
 function refreshSetupBadge() {
-  $("#aiDot").classList.toggle("connected", !!state.setup.openai);
-  debug("debugMind", state.setup.openai ? (state.setup.model || "OPENAI").toUpperCase() : "NON CONFIGURATA");
+  const st = state.setup;
+  $("#aiDot").classList.toggle("connected", brainReady());
+  debug("debugMind", !brainReady() ? "NON CONFIGURATA" : st.brain === "free" ? `GRATIS · ${st.free.ready} MODELLI PRONTI` : (st.model || "OPENAI").toUpperCase());
+  if (st.brain === "free" && st.lastBrain) showBrain(st.lastBrain, false);
+  if (st.brain !== "free") $("#brainChip").hidden = true;
+}
+// Mostra quale AI sta rispondendo; se è cambiata, lo fa vedere.
+function showBrain(b, switched) {
+  const chip = $("#brainChip");
+  chip.hidden = false;
+  const model = String(b.model || "").split("/").pop().replace(/:free$/i, "").replace(/-instruct.*$/i, "").slice(0, 24).toUpperCase();
+  $("#brainName").textContent = [b.provider || "AUTO", model].filter(Boolean).join(" · ");
+  chip.title = b.via || "";
+  debug("debugMind", `GRATIS · ${b.via}`);
+  if (switched) {
+    chip.classList.remove("flash");
+    void chip.offsetWidth;
+    chip.classList.add("flash");
+  }
 }
 function setState(id, text, kind = "") {
   const el = document.getElementById(id);
   el.textContent = text;
   el.className = `state ${kind}`;
 }
+function freeStateText(f) {
+  if (!f) return ["", ""];
+  if (f.keyOk && f.ready) return [`Collegato${f.source === "app" ? " in automatico" : ""} · ${f.ready} intelligenze gratuite pronte`, "ok"];
+  if (f.keyOk) return ["FreeLLMAPI è acceso ma non ha ancora chiavi: fai il passaggio 2.", "err"];
+  if (f.online) return ["FreeLLMAPI è acceso ma la chiave non va: usa «Non si collega da solo?».", "err"];
+  return ["FreeLLMAPI non è ancora acceso o installato: fai il passaggio 1.", ""];
+}
+function setBrainChoice(v) {
+  document.querySelector(`input[name=brain][value=${v}]`).checked = true;
+  $("#setup").classList.toggle("openai", v === "openai");
+}
 function openSetup() {
   const st = state.setup;
   body.classList.add("show-setup");
-  $("#openaiKey").value = $("#elevenKey").value = $("#calendarUrl").value = "";
+  $("#openaiKey").value = $("#elevenKey").value = $("#calendarUrl").value = $("#freeKey").value = "";
+  setBrainChoice(st.brain === "openai" ? "openai" : "free");
+  setState("freeState", ...freeStateText(st.free));
+  if (st.free?.dashboard) $("#freeDash").href = st.free.dashboard;
   $("#openaiKey").placeholder = st.openai ? `salvata: ${st.openaiMasked} (lascia vuoto per tenerla)` : "sk-...";
   $("#elevenKey").placeholder = st.elevenlabs ? `salvata: ${st.elevenlabsMasked}` : "sk_...";
   $("#calendarUrl").placeholder = st.calendar ? "collegato (incolla un nuovo link per cambiarlo)" : "https://calendar.google.com/calendar/ical/.../basic.ics";
@@ -518,24 +556,33 @@ function openSetup() {
   setState("calendarState", st.calendar ? (st.calendarError ? `Errore: ${st.calendarError}` : `Collegato · ${st.calendarEvents} eventi letti`) : "", st.calendar ? (st.calendarError ? "err" : "ok") : "");
   document.querySelector(`input[name=voice][value=${st.elevenlabs ? "eleven" : "free"}]`).checked = true;
   $("#setup").classList.toggle("eleven", !!st.elevenlabs);
-  $("#setupClose").style.display = st.openai ? "" : "none";
+  $("#setupClose").style.display = brainReady(st) ? "" : "none";
   $("#setupError").textContent = "";
-  if (!st.openai) setTimeout(() => $("#openaiKey").focus(), 50);
+  if (st.brain === "openai" && !st.openai) setTimeout(() => $("#openaiKey").focus(), 50);
 }
 const closeSetup = () => body.classList.remove("show-setup");
 document.querySelectorAll("input[name=voice]").forEach((r) => r.addEventListener("change", () => $("#setup").classList.toggle("eleven", r.value === "eleven" && r.checked)));
+document.querySelectorAll("input[name=brain]").forEach((r) => r.addEventListener("change", () => r.checked && setBrainChoice(r.value)));
+// mentre la configurazione è aperta, ricontrolla FreeLLMAPI ogni pochi secondi (così si vede quando è pronto)
+setInterval(async () => {
+  if (!body.classList.contains("show-setup") || document.querySelector("input[name=brain]:checked")?.value !== "free") return;
+  try { state.setup = await api("/api/setup"); setState("freeState", ...freeStateText(state.setup.free)); } catch {}
+}, 4000);
 $("#setupClose").addEventListener("click", closeSetup);
 $("#setupBtn").addEventListener("click", () => openSetup());
 $("#setupForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const eleven = document.querySelector("input[name=voice]:checked").value === "eleven";
+  const brain = document.querySelector("input[name=brain]:checked").value;
   const payload = {
+    brain,
+    freeKey: $("#freeKey").value.trim(),
     openaiKey: $("#openaiKey").value.trim(),
     elevenlabsKey: eleven ? $("#elevenKey").value.trim() : "",
     useFreeVoice: !eleven,
     ...($("#calendarUrl").value.trim() ? { calendarUrl: $("#calendarUrl").value.trim() } : {}),
   };
-  if (!state.setup.openai && !payload.openaiKey) return ($("#setupError").textContent = "Inserisci la chiave OpenAI: è l'unica obbligatoria.");
+  if (brain === "openai" && !state.setup.openai && !payload.openaiKey) return ($("#setupError").textContent = "Inserisci la chiave OpenAI, oppure scegli il cervello gratuito.");
   if (eleven && !state.setup.elevenlabs && !payload.elevenlabsKey) return ($("#setupError").textContent = "Inserisci la chiave ElevenLabs oppure scegli la voce gratuita.");
   $("#setupSave").disabled = true;
   $("#setupSave").textContent = "VERIFICA IN CORSO…";
@@ -543,6 +590,7 @@ $("#setupForm").addEventListener("submit", async (e) => {
   try {
     const r = await api("/api/setup", { method: "POST", body: JSON.stringify(payload) });
     if (r.errors.openai) setState("openaiState", r.errors.openai, "err");
+    if (r.errors.free) setState("freeState", r.errors.free, "err");
     if (r.errors.elevenlabs) setState("elevenState", r.errors.elevenlabs, "err");
     if (r.errors.calendar) setState("calendarState", r.errors.calendar, "err");
     state.setup = r.status;

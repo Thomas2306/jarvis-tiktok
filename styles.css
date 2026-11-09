@@ -201,3 +201,23 @@ details a { color: #fff; }
 .setup-error { min-height: 18px; margin: 10px 0; font-size: 12px; color: #ff8a8a; }
 .setup .row { display: flex; gap: 8px; justify-content: flex-end; }
 @media (max-width: 560px) { .field { flex-direction: column; margin-left: 0; } .choice, .state, details { margin-left: 0; } .setup-card { padding: 24px 18px; } }
+
+/* ---------------------------------------------------------------- cervello gratis */
+#openaiBox { display: none; }
+.setup.openai #openaiBox { display: block; }
+.setup.openai #freeBox { display: none; }
+.howto { margin: 10px 0 0 49px; font-size: 12px; line-height: 1.6; color: rgba(255, 255, 255, 0.75); }
+.howto li { margin-top: 6px; }
+.howto a { color: #fff; }
+.howto .keys { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.howto .keys a { padding: 3px 9px; border: 1px solid rgba(255, 255, 255, 0.3); text-decoration: none; font-size: 11px; }
+.howto .keys a:hover { border-color: #fff; }
+#freeBox details .field { margin-left: 0; margin-top: 8px; }
+@media (max-width: 560px) { .howto { margin-left: 18px; } }
+
+#brainChip { display: inline-flex; gap: 8px; align-items: baseline; margin-left: 14px; padding-left: 14px; border-left: 1px solid rgba(255, 255, 255, 0.2); }
+#brainChip[hidden] { display: none; }
+#brainChip i { font-style: normal; color: var(--dim); }
+#brainChip b { font-weight: 500; color: #fff; letter-spacing: 0.22em; transition: color 0.3s; }
+#brainChip.flash b { animation: brainFlash 1.6s ease-out; }
+@keyframes brainFlash { 0%, 30% { color: #7df9ff; text-shadow: 0 0 14px #7df9ff; } 100% { color: #fff; text-shadow: none; } }

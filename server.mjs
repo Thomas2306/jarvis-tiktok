@@ -1,5 +1,5 @@
 // J.A.R.V.I.S. — server locale
-// Tiene le chiavi lontane dal browser, parla con l'AI (OpenAI), genera la voce e legge il calendario.
+// Tiene le chiavi lontane dal browser, parla con l'AI (gratis via FreeLLMAPI oppure OpenAI), genera la voce e legge il calendario.
 import { createServer } from "node:http";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -9,12 +9,16 @@ import { spawn } from "node:child_process";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { loadCalendar, occurrences } from "./calendar.mjs";
+import * as free from "./cervello-gratis.mjs";
+import { tryCalc, sayNumber } from "./calcolo.mjs";
+import { createMemory } from "./memoria.mjs";
 
 const root = fileURLToPath(new URL("./", import.meta.url));
 const dataDir = join(root, "data");
 const dbFile = join(dataDir, "jarvis.json");
 const secretsFile = join(dataDir, "secrets.json");
 const ttsDir = join(dataDir, "tts-cache");
+const memory = createMemory(join(dataDir, "JARVIS-MEMORIA.md"));
 const VOICE_PORT = Number(process.env.JARVIS_VOICE_PORT) || 8765;
 const VOICE_URL = `http://127.0.0.1:${VOICE_PORT}`;
 const OPENAI_URL = (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
@@ -41,6 +45,10 @@ async function loadData() {
 const saveData = () => writeFile(dbFile, JSON.stringify(db, null, 2));
 const saveSecrets = () => writeFile(secretsFile, JSON.stringify(secrets, null, 2));
 const key = (name) => process.env[name] || secrets[name] || "";
+// Quale cervello usa Jarvis: "free" (FreeLLMAPI, gratis) oppure "openai" (a consumo).
+// Chi aveva già la chiave OpenAI resta su OpenAI finché non sceglie diversamente.
+const brainMode = () => process.env.JARVIS_BRAIN || secrets.BRAIN || (key("OPENAI_API_KEY") ? "openai" : "free");
+let lastBrain = null; // ultima AI che ha risposto (modalità gratis)
 
 // ---------------------------------------------------------------- servizio vocale (Python)
 function pythonPath() {
@@ -102,32 +110,7 @@ async function briefing() {
   return { lines, today: a.today };
 }
 
-// ---------------------------------------------------------------- memoria a lungo termine
-function cosine(a, b) {
-  let d = 0, x = 0, y = 0;
-  for (let i = 0; i < Math.min(a.length, b.length); i++) { d += a[i] * b[i]; x += a[i] ** 2; y += b[i] ** 2; }
-  return d / (Math.sqrt(x * y) || 1);
-}
-async function embed(text) {
-  if (!key("OPENAI_API_KEY")) return [];
-  const r = await fetch(`${OPENAI_URL}/embeddings`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key("OPENAI_API_KEY")}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "text-embedding-3-small", input: text }),
-    signal: AbortSignal.timeout(6000),
-  });
-  if (!r.ok) return [];
-  return (await r.json()).data?.[0]?.embedding || [];
-}
-async function recall(q) {
-  if (!db.memories.length) return [];
-  const v = await embed(q).catch(() => []);
-  if (v.length) return db.memories.filter((m) => m.embedding?.length).map((m) => ({ ...m, score: cosine(v, m.embedding) })).sort((a, b) => b.score - a.score).slice(0, 4).filter((m) => m.score > 0.25);
-  const words = q.toLowerCase().split(/\W+/).filter((w) => w.length > 3);
-  return db.memories.filter((m) => words.some((w) => m.text.toLowerCase().includes(w))).slice(0, 4);
-}
-
-// ---------------------------------------------------------------- cervello (OpenAI Responses API + strumenti)
+// ---------------------------------------------------------------- cervello (strumenti, istruzioni, OpenAI Responses API)
 const TOOLS = [
   {
     type: "function", name: "add_event",
@@ -160,7 +143,7 @@ const TOOLS = [
   },
 ];
 
-function instructions(memories, agendaStr) {
+function instructions(memoryText, agendaStr) {
   const s = db.settings.addressAs;
   const now = new Date().toLocaleString("it-IT", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
   return `Sei J.A.R.V.I.S., il sistema cognitivo personale del tuo utente, ispirato al JARVIS di Iron Man.
@@ -194,8 +177,9 @@ CONTESTO
 - Adesso è ${now} (fuso ${TZ}).
 - Agenda dei prossimi 7 giorni:
 ${agendaStr}
-- Ricordi pertinenti:
-${memories.length ? memories.map((m) => `- ${m.text}`).join("\n") : "- nessuno"}`;
+
+MEMORIA (dal file JARVIS-MEMORIA.md, sempre aggiornata: se la conversazione era interrotta riprendi da lì senza ricominciare da capo)
+${memoryText}`;
 }
 
 let chosenModel = null, reasoningEffort; // reasoningEffort: undefined = da scoprire, null = non supportato
@@ -287,8 +271,9 @@ async function runTool(call, emit) {
   if (call.name === "save_memory") {
     const text = String(a.text || "").trim();
     if (!text) return "Niente da salvare.";
-    db.memories.unshift({ id: randomUUID(), text, createdAt: new Date().toISOString(), embedding: await embed(text).catch(() => []) });
+    db.memories.unshift({ id: randomUUID(), text, createdAt: new Date().toISOString() });
     await saveData();
+    await memory.addFact(text);
     emit({ type: "memory", text });
     return "Ricordo salvato.";
   }
@@ -307,18 +292,72 @@ function cleanHistory(h) {
 }
 
 async function think(message, history, emit, signal) {
-  if (!key("OPENAI_API_KEY")) {
-    emit({ type: "delta", text: `Per ragionare mi serve la chiave OpenAI, ${db.settings.addressAs}. Apri la configurazione e inseriscila.` });
+  const s = db.settings.addressAs;
+  const past = cleanHistory(history);
+
+  // Conti semplici: risponde subito da solo, senza AI (istantaneo e sempre giusto).
+  const calc = tryCalc(message);
+  if (calc !== null) {
+    const said = `Fa ${sayNumber(calc)}, ${s}.`;
+    emit({ type: "brain", via: "jarvis/calcolatrice", provider: "CALCOLATRICE", model: "istantanea", switched: false, hops: 0, from: "" });
+    emit({ type: "stat", stat: { id: `n${Date.now()}`, label: "RISULTATO", value: calc, suffix: "" } });
+    emit({ type: "delta", text: said });
+    await memory.afterTurn([...past, { role: "user", content: message }, { role: "assistant", content: said }], { via: "jarvis/calcolatrice", provider: "CALCOLATRICE", model: "istantanea" }).catch(() => {});
     return;
   }
-  const [model, memories, ag] = await Promise.all([pickModel(), recall(message), agenda(7)]);
-  if (memories.length) emit({ type: "context", retrieved: memories.length });
-  let input = [...cleanHistory(history), { role: "user", content: message }];
-  const instr = instructions(memories, agendaText(ag.all));
+
+  const [mem, ag] = await Promise.all([memory.forPrompt(), agenda(7)]);
+  if (mem.facts.length) emit({ type: "context", retrieved: mem.facts.length });
+  const instr = instructions(mem.text, agendaText(ag.all));
+  let said = "";
+  const onText = (t) => {
+    if (!said) t = t.replace(/^\s+/, ""); // alcuni modelli gratuiti iniziano con righe vuote
+    if (!t) return;
+    said += t;
+    emit({ type: "delta", text: t });
+  };
+  const remember = (brain) => memory.afterTurn([...past, { role: "user", content: message }, { role: "assistant", content: said }], brain).catch(() => {});
+
+  // Cervello gratis: FreeLLMAPI sceglie l'AI e, se una ha finito i limiti, passa da sola alla successiva.
+  if (brainMode() === "free") {
+    const where = await free.locate(secrets);
+    if (!where.key) {
+      emit({ type: "delta", text: `Il mio cervello gratuito non è ancora collegato, ${s}. Apri la configurazione e segui il primo passaggio.` });
+      return;
+    }
+    const model = process.env.JARVIS_FREE_MODEL || db.settings.freeModel || "auto";
+    let messages = [{ role: "system", content: instr }, ...past, { role: "user", content: message }];
+    let brain = null;
+    for (let round = 0; round < 4; round++) {
+      const out = await free.streamChat({ ...where, model, messages, tools: TOOLS }, onText, (b, hops) => {
+        brain = b;
+        const switched = !!lastBrain && lastBrain.via !== b.via;
+        emit({ type: "brain", ...b, switched, hops, from: switched ? lastBrain.provider : "" });
+        if (switched || !lastBrain) console.log(`[mente] cervello: ${b.via}${hops ? ` (dopo ${hops} tentativi)` : ""}`);
+        lastBrain = b;
+      }, signal);
+      if (!out.calls.length) break;
+      messages = [...messages, { role: "assistant", content: out.text || null, tool_calls: out.calls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: c.arguments || "{}" } })) }];
+      for (const c of out.calls) {
+        emit({ type: "tool", name: c.name });
+        messages.push({ role: "tool", tool_call_id: c.id, content: await runTool(c, emit) });
+      }
+    }
+    await remember(brain);
+    return;
+  }
+
+  // Cervello OpenAI (a consumo)
+  if (!key("OPENAI_API_KEY")) {
+    emit({ type: "delta", text: `Per ragionare con OpenAI mi serve la chiave, ${s}. Apri la configurazione e inseriscila, oppure scegli il cervello gratuito.` });
+    return;
+  }
+  const model = await pickModel();
+  let input = [...past, { role: "user", content: message }];
   for (let round = 0; round < 4; round++) {
-    const items = await streamOnce({ model, instructions: instr, input, tools: TOOLS, parallel_tool_calls: true }, (t) => emit({ type: "delta", text: t }), signal);
+    const items = await streamOnce({ model, instructions: instr, input, tools: TOOLS, parallel_tool_calls: true }, onText, signal);
     const calls = items.filter((x) => x.type === "function_call");
-    if (!calls.length) return;
+    if (!calls.length) break;
     const outputs = [];
     for (const c of calls) {
       emit({ type: "tool", name: c.name });
@@ -326,6 +365,7 @@ async function think(message, history, emit, signal) {
     }
     input = [...input, ...items, ...outputs];
   }
+  await remember({ via: `openai/${model}` });
 }
 
 // ---------------------------------------------------------------- voce (TTS)
@@ -415,11 +455,23 @@ async function setupStatus() {
     elevenlabs: !!key("ELEVENLABS_API_KEY"), elevenlabsMasked: mask(key("ELEVENLABS_API_KEY")),
     calendar: !!key("CALENDAR_ICS_URL"), calendarEvents: cal?.events.length || 0, calendarError: cal?.error || null,
     model: chosenModel,
+    brain: brainMode(),
+    free: await free.status(secrets),
+    lastBrain,
   };
 }
 async function applySetup(b) {
   const errors = {};
-  if (typeof b.openaiKey === "string" && b.openaiKey.trim()) {
+  if (b.brain === "free" || b.brain === "openai") secrets.BRAIN = b.brain;
+  if (typeof b.freeKey === "string" && b.freeKey.trim()) secrets.FREELLM_API_KEY = b.freeKey.trim();
+  if (typeof b.freeUrl === "string" && b.freeUrl.trim()) secrets.FREELLM_URL = b.freeUrl.trim();
+  if (b.brain === "free") {
+    const st = await free.status(secrets);
+    if (!st.online) errors.free = "FreeLLMAPI non risponde: è acceso? Cerca la sua icona vicino all'orologio.";
+    else if (!st.keyOk) errors.free = "Chiave di FreeLLMAPI non valida: copiala di nuovo dall'icona (Copy Key).";
+    else if (!st.ready) errors.free = "FreeLLMAPI è acceso ma non ha ancora nessuna AI pronta: aggiungi almeno una chiave gratuita.";
+  }
+  if (b.brain !== "free" && typeof b.openaiKey === "string" && b.openaiKey.trim()) {
     const k = b.openaiKey.trim();
     const r = await fetch(`${OPENAI_URL}/models`, { headers: { Authorization: `Bearer ${k}` }, signal: AbortSignal.timeout(10000) }).catch(() => null);
     if (r?.ok) { secrets.OPENAI_API_KEY = k; chosenModel = null; reasoningEffort = undefined; }
@@ -461,8 +513,9 @@ async function json(req) {
 }
 
 await loadData();
+await memory.init(db.memories);
 setTimeout(warmBriefing, 800);
-setTimeout(() => key("OPENAI_API_KEY") && pickModel(), 1200);
+setTimeout(() => brainMode() === "openai" && key("OPENAI_API_KEY") && pickModel(), 1200);
 
 createServer(async (req, res) => {
   try {
@@ -470,7 +523,7 @@ createServer(async (req, res) => {
 
     if (p === "/api/bootstrap") {
       const [b, setup] = await Promise.all([briefing(), setupStatus()]);
-      return send(res, 200, { settings: { addressAs: db.settings.addressAs }, setup, briefing: b, memories: db.memories.slice(0, 5).map(({ embedding, ...m }) => m) });
+      return send(res, 200, { settings: { addressAs: db.settings.addressAs }, setup, briefing: b, memories: (await memory.forPrompt()).facts.slice(-5).reverse().map((text) => ({ text })) });
     }
     if (p === "/api/setup" && req.method === "GET") return send(res, 200, await setupStatus());
     if (p === "/api/setup" && req.method === "POST") return send(res, 200, await applySetup(await json(req)));
@@ -518,7 +571,13 @@ createServer(async (req, res) => {
         if (!abort.signal.aborted) {
           console.warn(`[mente] ${e.message}`);
           const s = db.settings.addressAs;
-          const msg = e.status === 401 ? `La chiave OpenAI non è più valida, ${s}. Aggiornala dalla configurazione.`
+          const msg = e.slow
+            ? `Le intelligenze gratuite stanno rispondendo molto lentamente in questo momento, ${s}. Riprova tra poco: con una chiave gratuita di Groq o Google vado molto più veloce.`
+            : e.free
+            ? (e.status === 401 || e.status === 403 ? `FreeLLMAPI non riconosce più la chiave, ${s}. Ricollegalo dalla configurazione.`
+              : `In questo momento tutte le intelligenze gratuite che ho a disposizione sono occupate o hanno finito i limiti, ${s}. Riprova tra un minuto, oppure aggiungi un altro servizio gratuito.`)
+            : e.cause?.code === "ECONNREFUSED" && brainMode() === "free" ? `Il mio cervello gratuito è spento, ${s}. Avvia FreeLLMAPI e riprova.`
+            : e.status === 401 ? `La chiave OpenAI non è più valida, ${s}. Aggiornala dalla configurazione.`
             : e.status === 429 ? `Il mio account OpenAI ha esaurito il credito o è sovraccarico, ${s}. Controlla la fatturazione e riprova.`
             : `La connessione con la mia mente si è interrotta, ${s}. Riprova tra un istante.`;
           if (!spoke) emit({ type: "delta", text: msg });
@@ -553,5 +612,5 @@ createServer(async (req, res) => {
     if (HOST === "0.0.0.0")
       for (const list of Object.values(networkInterfaces()))
         for (const a of list || []) if (a.family === "IPv4" && !a.internal) console.log(`  dalla rete di casa  →  http://${a.address}:${PORT}`);
-    if (!key("OPENAI_API_KEY")) console.log("  Prima configurazione: apri la pagina e inserisci la chiave OpenAI.\n");
+    console.log(`  Cervello: ${brainMode() === "free" ? "GRATIS (FreeLLMAPI)" : "OpenAI"}  ·  memoria: data/JARVIS-MEMORIA.md\n`);
   });
