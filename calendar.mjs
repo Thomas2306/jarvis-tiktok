@@ -1,15 +1,48 @@
 // Lettura di un calendario tramite link iCal (.ics): Google Calendar, Apple iCloud, Outlook.
 // Sola lettura. Supporta eventi singoli, giornate intere, fusi orari ed eventi ricorrenti comuni.
+import { lookup } from "node:dns/promises";
 
 let cache = { url: "", at: 0, events: [], error: null };
+
+// Blocca indirizzi loopback/privati/link-local per evitare richieste verso servizi interni (SSRF).
+function isPrivateIp(ip) {
+  if (ip === "::1" || ip === "0.0.0.0") return true;
+  const m = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (m) {
+    const [a, b] = [+m[1], +m[2]];
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  const low = ip.toLowerCase();
+  return low === "::" || low.startsWith("fe80:") || low.startsWith("fc") || low.startsWith("fd") || low.startsWith("::ffff:127.");
+}
+async function isBlockedHost(hostname) {
+  if (/^(localhost|.*\.local)$/i.test(hostname)) return true;
+  try {
+    const { address } = await lookup(hostname);
+    return isPrivateIp(address);
+  } catch {
+    return true;
+  }
+}
+// Recupera il testo seguendo manualmente i redirect, validando ogni destinazione prima della richiesta.
+async function fetchCalendarText(startUrl, hops = 5) {
+  let current = startUrl;
+  for (let i = 0; i < hops; i++) {
+    const target = new URL(current);
+    if (!/^https?:$/.test(target.protocol) || (await isBlockedHost(target.hostname))) throw new Error("URL del calendario non consentito");
+    const r = await fetch(target, { signal: AbortSignal.timeout(12_000), redirect: "manual" });
+    if (r.status >= 300 && r.status < 400 && r.headers.get("location")) { current = new URL(r.headers.get("location"), target).toString(); continue; }
+    if (!r.ok) throw new Error(`il calendario ha risposto ${r.status}`);
+    return r.text();
+  }
+  throw new Error("troppi redirect");
+}
 
 export async function loadCalendar(url, { maxAgeMs = 5 * 60_000 } = {}) {
   if (!url) return { events: [], error: null };
   if (cache.url === url && Date.now() - cache.at < maxAgeMs) return cache;
   try {
-    const r = await fetch(url.replace(/^webcal:\/\//i, "https://"), { signal: AbortSignal.timeout(12_000), redirect: "follow" });
-    if (!r.ok) throw new Error(`il calendario ha risposto ${r.status}`);
-    const text = await r.text();
+    const text = await fetchCalendarText(url.replace(/^webcal:\/\//i, "https://"));
     if (!text.includes("BEGIN:VCALENDAR")) throw new Error("il link non è un calendario iCal");
     cache = { url, at: Date.now(), events: parseICS(text), error: null };
   } catch (e) {
