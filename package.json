@@ -2,6 +2,7 @@
   "name": "jarvis",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "J.A.R.V.I.S. — assistente vocale personale in stile Iron Man",
   "type": "module",
   "engines": { "node": ">=20" },

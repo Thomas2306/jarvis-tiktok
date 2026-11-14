@@ -60,3 +60,7 @@ Chiedilo al tuo agente AI, per esempio «fai che mi chiami per nome», «cambia 
 
 Costruito facendo lavorare insieme Claude Code e Codex.
 Cervello gratis con [FreeLLMAPI](https://github.com/tashfeenahmed/freellmapi) di Tashfeen Ahmed (MIT) · grafica con [three.js](https://threejs.org) (MIT) · font Inter (SIL OFL, `assets/fonts/inter-OFL.txt`) · voce gratuita con [edge-tts](https://github.com/rany2/edge-tts) · voce premium con [ElevenLabs](https://elevenlabs.io).
+
+## Licenza
+
+Jarvis è open source con licenza [MIT](LICENSE): è gratis per tutti e puoi usarlo, modificarlo, ridistribuirlo e venderlo, anche per uso commerciale. L'unica richiesta è lasciare la nota di copyright e la licenza nelle copie. Font, librerie e musica di terze parti mantengono la loro licenza (vedi LICENSE).
